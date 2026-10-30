@@ -1,11 +1,15 @@
-// Deep-ML Roaming Companion, Release 1 (v0.1.0). Runs in the page world so it can reach window.monaco.
+// Deep-ML Roaming Companion, Release 2 (v0.2.0). Runs in the page world so it can reach window.monaco.
+// R2: the bot stays visible while the chat is open (click it to close), and the open chat drags by its header.
 
 (() => {
   'use strict';
+  if (window.__dmlc) return; // never run twice in one page
 
   // Selectors confirmed on deep-ml.com (Oct 2026). Update here if the site renames them.
   const BTN = 'button[aria-label="Open study assistant"]';
   const DLG = '[role="dialog"][aria-label="Study assistant"]';
+  const DLG_CLOSE = 'button[aria-label="Close"]';
+  const PROXY = '#dmlc-proxy';
 
   const POP_W = 360;           // popover width
   const POP_H_MAX = 460;       // popover max height
@@ -13,7 +17,6 @@
   const SNAP_PX = 90;          // snap to editor edge when dropped this close
   const HOTKEY = { alt: true, code: 'KeyK' }; // Alt+K (Option+K on Mac) opens / focuses
 
-  const W = window;
   const root = document.documentElement;
   const store = {
     get() { try { return JSON.parse(localStorage.getItem('dmlc-pos')); } catch { return null; } },
@@ -23,11 +26,14 @@
   // ---------- styles ----------
   const css = document.createElement('style');
   css.textContent = `
-    ${BTN}{left:var(--dmlc-x)!important;top:var(--dmlc-y)!important;right:auto!important;bottom:auto!important;
+    ${BTN}, ${PROXY}{position:fixed!important;left:var(--dmlc-x)!important;top:var(--dmlc-y)!important;right:auto!important;bottom:auto!important;
       cursor:grab;touch-action:none;user-select:none}
-    ${BTN}:active{cursor:grabbing}
+    ${BTN}:active, ${PROXY}:active{cursor:grabbing}
+    ${PROXY}{z-index:51!important}
     ${DLG}{left:var(--dmlc-px)!important;top:var(--dmlc-py)!important;right:auto!important;bottom:auto!important;
       width:${POP_W}px!important;height:var(--dmlc-ph)!important}
+    ${DLG} > div > div:first-child{cursor:move;touch-action:none;user-select:none}
+    ${DLG} > div > div:first-child button{cursor:pointer}
     #dmlc-bar{position:fixed;z-index:60;display:none;gap:6px;font:11px/1 ui-monospace,'JetBrains Mono',monospace}
     #dmlc-bar button{background:#fafafa;color:#18181b;border:2px solid #18181b;padding:5px 8px;cursor:pointer;box-shadow:2px 2px 0 #facc15}
     #dmlc-bar button.off{background:#27272a;color:#d4d4d8;box-shadow:none}
@@ -38,6 +44,7 @@
 
   // ---------- position ----------
   let pos = store.get() || { x: innerWidth - BOT - 24, y: innerHeight - BOT - 24 };
+  let pop = { x: 0, y: 0, h: POP_H_MAX }; // where the chat popover currently sits
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -53,6 +60,7 @@
     root.style.setProperty('--dmlc-px', px + 'px');
     root.style.setProperty('--dmlc-py', py + 'px');
     root.style.setProperty('--dmlc-ph', ph + 'px');
+    pop = { x: px, y: py, h: ph };
     bar.style.left = px + 'px';
     bar.style.top = Math.max(4, py - 34) + 'px';
   }
@@ -65,14 +73,25 @@
     if (inY && Math.abs(pos.x + BOT - r.right) < SNAP_PX) pos.x = r.right - BOT - 8;
   }
 
-  // ---------- drag (delegated, survives React re-mounts) ----------
+  // ---------- drag handles: the bot, its stand-in while the chat is open, and the chat header ----------
+  function dragHandle(target) {
+    if (target.closest(BTN) || target.closest(PROXY)) return 'bot';
+    const dlg = target.closest(DLG);
+    if (!dlg || target.closest('button, a, input, textarea')) return null;
+    const head = dlg.firstElementChild && dlg.firstElementChild.firstElementChild;
+    return head && head.contains(target) ? 'header' : null;
+  }
+
   let drag = null;
   let suppressUntil = 0;
 
   document.addEventListener('pointerdown', (e) => {
-    const b = e.target.closest(BTN);
-    if (!b || e.button !== 0) return;
-    drag = { sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y, moved: false };
+    if (e.button !== 0) return;
+    const kind = dragHandle(e.target);
+    if (!kind) return;
+    const o = kind === 'bot' ? pos : pop;
+    drag = { kind, sx: e.clientX, sy: e.clientY, ox: o.x, oy: o.y, moved: false };
+    if (kind === 'header') e.preventDefault(); // stop text selection in the header
   }, true);
 
   window.addEventListener('pointermove', (e) => {
@@ -80,14 +99,21 @@
     const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
     if (!drag.moved && Math.hypot(dx, dy) < 5) return;
     drag.moved = true;
-    pos = { x: drag.ox + dx, y: drag.oy + dy };
+    if (drag.kind === 'bot') {
+      pos = { x: drag.ox + dx, y: drag.oy + dy };
+    } else {
+      // the chat follows the cursor; the bot rides on its right edge, vertically centred
+      const px = clamp(drag.ox + dx, 8, innerWidth - POP_W - 8);
+      const py = clamp(drag.oy + dy, 44, innerHeight - pop.h - 8);
+      pos = { x: px + POP_W + 12, y: py + pop.h / 2 - BOT / 2 };
+    }
     apply();
   }, true);
 
   window.addEventListener('pointerup', () => {
     if (!drag) return;
     if (drag.moved) {
-      snapToEditor();
+      if (drag.kind === 'bot') snapToEditor();
       apply();
       store.set(pos);
       suppressUntil = performance.now() + 300; // swallow the click that follows a drag
@@ -96,7 +122,7 @@
   }, true);
 
   window.addEventListener('click', (e) => {
-    if (performance.now() < suppressUntil && e.target.closest(BTN)) {
+    if (performance.now() < suppressUntil && (e.target.closest(BTN) || e.target.closest(PROXY))) {
       e.stopPropagation();
       e.preventDefault();
     }
@@ -104,9 +130,38 @@
 
   addEventListener('resize', apply);
 
+  // ---------- stand-in bot while the chat is open (Deep-ML unmounts its own) ----------
+  let botLook = null; // { className, html } copied from Deep-ML's launcher
+  const proxy = document.createElement('button');
+  proxy.id = 'dmlc-proxy';
+  proxy.type = 'button';
+  proxy.setAttribute('aria-label', 'Close study assistant');
+  proxy.title = 'Click to close, drag to move';
+  proxy.style.display = 'none';
+  proxy.addEventListener('click', () => {
+    if (performance.now() < suppressUntil) return;
+    document.querySelector(DLG)?.querySelector(DLG_CLOSE)?.click();
+  });
+  document.body.appendChild(proxy);
+
+  function rememberBotLook() {
+    const b = document.querySelector(BTN);
+    if (b) botLook = { className: b.className, html: b.innerHTML };
+  }
+
+  function showProxy(on) {
+    if (on && botLook) {
+      proxy.className = botLook.className;
+      proxy.innerHTML = botLook.html;
+      proxy.style.display = '';
+    } else {
+      proxy.style.display = 'none';
+    }
+  }
+
   // ---------- Monaco helpers ----------
   function editor() {
-    const m = W.monaco;
+    const m = window.monaco;
     if (!m || !m.editor) return null;
     const eds = m.editor.getEditors ? m.editor.getEditors() : [];
     return eds.find((x) => x.hasTextFocus && x.hasTextFocus()) || eds[0] || null;
@@ -129,7 +184,7 @@
     const ed = editor();
     if (!ed || !lines.length) return;
     const max = ed.getModel().getLineCount();
-    const R = W.monaco.Range;
+    const R = window.monaco.Range;
     const decos = lines.filter((n) => n >= 1 && n <= max).map((n) => ({
       range: new R(n, 1, n, 1),
       options: { isWholeLine: true, className: 'dmlc-line', linesDecorationsClassName: 'dmlc-gutter' },
@@ -189,13 +244,14 @@
     }
   });
 
-  // ---------- watch the dialog: show bar, mark lines when an answer settles ----------
+  // ---------- watch the page: launcher look, dialog open/close, answers settling ----------
   let lastText = '';
   let settle = null;
   let dlgObs = null;
 
-  function onDialog(dlg) {
+  function onDialogOpen(dlg) {
     bar.style.display = 'flex';
+    showProxy(true);
     lastText = dlg.innerText;
     dlgObs = new MutationObserver(() => {
       clearTimeout(settle);
@@ -203,18 +259,26 @@
         const now = dlg.innerText;
         const fresh = now.startsWith(lastText) ? now.slice(lastText.length) : now.slice(-1500);
         lastText = now;
-        // skip the echo of our own attached block
-        const answer = fresh.replace(/My current[\s\S]*?say "line N"\./g, '');
+        const answer = fresh.replace(/My current[\s\S]*?say "line N"\./g, ''); // skip our own attached block
         if (autoMark) markLines(lineRefs(answer));
       }, 900);
     });
     dlgObs.observe(dlg, { childList: true, subtree: true, characterData: true });
   }
 
+  function onDialogClose() {
+    dlgObs.disconnect();
+    dlgObs = null;
+    bar.style.display = 'none';
+    showProxy(false);
+  }
+
+  rememberBotLook();
   new MutationObserver(() => {
+    if (!botLook) rememberBotLook();
     const dlg = document.querySelector(DLG);
-    if (dlg && !dlgObs) onDialog(dlg);
-    if (!dlg && dlgObs) { dlgObs.disconnect(); dlgObs = null; bar.style.display = 'none'; }
+    if (dlg && !dlgObs) onDialogOpen(dlg);
+    if (!dlg && dlgObs) onDialogClose();
   }).observe(document.body, { childList: true, subtree: true });
 
   // ---------- hotkey ----------
@@ -227,6 +291,6 @@
     else document.querySelector(BTN)?.click();
   }, true);
 
-  window.__dmlc = { markLines, lineRefs, attachCode, getPos: () => ({ ...pos }) };
+  window.__dmlc = { version: '0.2.0', markLines, lineRefs, attachCode, getPos: () => ({ ...pos }) };
   apply();
 })();
