@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Deep-ML Roaming Companion",
-  "version": "0.2.0",
-  "description": "Draggable Deep-ML study assistant: compact popover beside the bot, chat drags by its header, Attach code, line marks, Alt+K.",
+  "version": "0.3.0",
+  "description": "Draggable bot on Deep-ML: ask about your code in a compact box, answered by Deep-ML's own assistant, and the editor jumps to the line it points at.",
   "content_scripts": [
     {
       "matches": [
