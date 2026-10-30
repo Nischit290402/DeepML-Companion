@@ -1,4 +1,4 @@
-// Deep-ML Roaming Companion v0.3.0. Runs in the page world so it can reach window.monaco.
+// Deep-ML Roaming Companion v0.5.0. Runs in the page world so it can reach window.monaco.
 // Click the bot and a compact box opens. Your code (or the lines you selected) goes along
 // silently, Deep-ML's own assistant answers in the background, and the editor jumps to the
 // line the answer points at.
@@ -111,6 +111,14 @@
   .ans a{color:#facc15}
   .ans h1,.ans h2,.ans h3,.ans h4{font-size:13px;margin:8px 0 4px}
   .ans strong{color:#fafafa}
+  .codewrap{position:relative}
+  .codewrap pre{padding-top:30px}
+  .copy{position:absolute;top:6px;right:6px;font:11px/1 ui-monospace,'JetBrains Mono',monospace;background:#27272a;color:#e4e4e7;
+    border:1px solid #52525b;padding:4px 8px;cursor:pointer}
+  .copy:hover{border-color:#a1a1aa}
+  .note{font-size:11px;color:#8a8a93;margin:6px 0 0}
+  .btn{font:700 12px/1 ui-monospace,'JetBrains Mono',monospace;background:#fafafa;color:#18181b;border:2px solid #18181b;
+    box-shadow:2px 2px 0 #facc15;padding:7px 12px;cursor:pointer;margin-top:8px}
   .lnk{font:inherit;color:#facc15;background:none;border:0;padding:0;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
   .err{color:#fca5a5;margin:0}
   .ask{padding:8px 10px 6px;border-top:1px solid #3f3f46}
@@ -514,9 +522,28 @@
       (partial ? `<div class="partial">${esc(partial.replace(/GOTO:\s*(\d+|none)\.?/gi, '').trim())}</div>` : '');
   }
 
+  function addCopyButtons(node) {
+    node.querySelectorAll('pre').forEach((pre) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'codewrap';
+      pre.replaceWith(wrap);
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'copy';
+      b.textContent = 'Copy';
+      on(b, 'click', async () => {
+        try { await navigator.clipboard.writeText(pre.innerText.replace(/\n$/, '')); b.textContent = 'Copied'; }
+        catch { b.textContent = 'Select and copy'; }
+        setTimeout(() => { b.textContent = 'Copy'; }, 1500);
+      });
+      wrap.append(b, pre);
+    });
+  }
+
   function renderAnswer(label, node) {
     body.className = 'body on';
     body.innerHTML = label ? `<p class="q">${esc(label)}</p>` : '';
+    addCopyButtons(node);
     body.append(node);
     body.scrollTop = 0;
   }
@@ -603,6 +630,11 @@
     return ctx ? { lang: ctx.lang, lines: ctx.lines, numbered: numbered(ctx.lines, 1, ctx.lines.length) } : null;
   }
 
-  window.__dmlc = { version: '0.3.0', ask, jumpTo, on, codeSnapshot, showCard, getPos: () => ({ ...pos }) };
+  window.__dmlc = {
+    version: '0.5.0', ask, jumpTo, on, codeSnapshot, getPos: () => ({ ...pos }),
+    // for review.js: drive the same box without going through Deep-ML's assistant
+    showCard: () => { if (!cardOpen()) showCard(); },
+    render: { title: setTitle, answer: renderAnswer, error: renderError },
+  };
   apply();
 })();

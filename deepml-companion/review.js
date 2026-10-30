@@ -1,6 +1,8 @@
-// Deep-ML Roaming Companion v0.4.0: interview-style review after your code passes.
-// Watches Run / Submit. When every test passes, it asks Deep-ML's assistant to review the
-// solution like an interviewer would and pops the answer up next to the bot. Once per code version.
+// Deep-ML Roaming Companion v0.5.0: interview version after your code passes.
+// Watches Run / Submit. When every test passes, Chrome's on-device Gemini Nano rewrites your
+// solution the way you'd want it in an interview and the box shows only that code.
+// No API key, nothing leaves your laptop. Deep-ML's own assistant refuses to write full code,
+// so it isn't used here.
 
 (() => {
   'use strict';
@@ -9,6 +11,7 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const reviewedKey = () => 'dmlc-reviewed:' + location.pathname;
+  const TITLE = 'Interview version';
 
   function hash(s) {
     let h = 0;
@@ -16,11 +19,11 @@
     return String(h);
   }
 
-  // The results panel sits under the "Test Cases" heading and reads "TEST RESULTS 1/1 ... Passed" after a run.
+  // ---------- detect a passing run ----------
+  // The results panel sits under the "Test Cases(1)" heading and reads "TEST RESULTS 5/5" after a run.
   let panel = null;
   function findPanel() {
     if (panel && panel.isConnected) return panel;
-    // the heading reads "Test Cases(1)": text plus a count badge
     const heading = [...document.querySelectorAll('span, div, p, h2, h3, button')]
       .find((e) => e.textContent.length < 40 && /^\s*Test Cases/.test(e.textContent));
     let el = heading;
@@ -62,37 +65,118 @@
     }
   }
 
-  function reviewPrompt(snap) {
+  // ---------- Gemini Nano (Chrome's built-in Prompt API) ----------
+  const LANG = { expectedInputs: [{ type: 'text', languages: ['en'] }], expectedOutputs: [{ type: 'text', languages: ['en'] }] };
+  const SYSTEM = 'You rewrite working coding-interview solutions. You output only code, never prose.';
+
+  async function availability() {
+    const LM = window.LanguageModel;
+    if (!LM) return 'unavailable';
+    try { return await LM.availability(LANG); } catch { return LM.availability(); }
+  }
+
+  async function createSession(onProgress) {
+    const opts = {
+      ...LANG,
+      initialPrompts: [{ role: 'system', content: SYSTEM }],
+      monitor(m) { m.addEventListener('downloadprogress', (e) => onProgress(e.loaded)); },
+    };
+    try { return await window.LanguageModel.create(opts); } catch (err) {
+      if (err && err.name === 'NotAllowedError') throw err;
+      delete opts.expectedInputs; // older option set
+      delete opts.expectedOutputs;
+      return window.LanguageModel.create(opts);
+    }
+  }
+
+  function rewritePrompt(snap) {
     return [
-      'I just ran my solution and all tests passed. Review it the way an ML interviewer would after a coding round, so I can learn.',
-      'Use exactly this format, under 150 words in total:',
-      '**Verdict:** one line.',
-      '**Complexity:** time and space, one line.',
-      '**Improve:** 2 or 3 bullets on what an interviewer would push on (readability, naming, edge cases, numerical stability, vectorization). Point at code as "line N".',
-      '**Follow-up:** one question an interviewer might ask next.',
-      "Don't rewrite my whole solution and don't suggest another problem. End with one final line exactly: GOTO: none.",
+      `This ${snap.lang} solution passes all tests. Rewrite it the way a strong candidate would in an ML coding interview:`,
+      'correct, idiomatic, efficient (vectorized NumPy where it fits), clear names, no dead code, not over-engineered.',
+      'Keep the same function name, signature and behaviour, including edge cases. You may drop template docstrings and placeholder comments.',
+      `Output only the code, in one \`\`\`${snap.lang} block.`,
       '',
-      `My ${snap.lang} code, numbered as in my editor:`,
-      '```',
-      snap.numbered,
+      '```' + snap.lang,
+      snap.lines.join('\n'),
       '```',
     ].join('\n');
   }
 
-  function onPass() {
+  function extractCode(text) {
+    const m = text.match(/```[\w+-]*\n([\s\S]*?)(```|$)/);
+    return (m ? m[1] : text.replace(/```[\w+-]*/g, '')).replace(/\s+$/, '');
+  }
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text) e.textContent = text;
+    return e;
+  }
+
+  function show(node, label) {
+    api.render.title(TITLE);
+    api.showCard();
+    api.render.answer(label || '', node);
+  }
+
+  function codeNode(code, done) {
+    const wrap = el('div', 'ans');
+    const pre = el('pre');
+    pre.append(el('code', null, code || ' '));
+    wrap.append(pre);
+    if (done) wrap.append(el('p', 'note', 'Written on your laptop by Gemini Nano. Paste it in and Run before trusting it.'));
+    return wrap;
+  }
+
+  async function generate(snap) {
+    const status = el('p', 'wait', 'Writing the interview version…');
+    show(status);
+    let session;
+    try {
+      session = await createSession((loaded) => { status.textContent = `Downloading the on-device model… ${Math.round(loaded * 100)}%`; });
+    } catch (err) {
+      api.render.error(`Gemini Nano didn't start: ${err.message || err}`);
+      return;
+    }
+    let out = '';
+    let lastPaint = 0;
+    try {
+      for await (const chunk of session.promptStreaming(rewritePrompt(snap))) {
+        out = chunk.startsWith(out) && out ? chunk : out + chunk; // handles both delta and cumulative streams
+        if (Date.now() - lastPaint > 150) { show(codeNode(extractCode(out), false)); lastPaint = Date.now(); }
+      }
+      show(codeNode(extractCode(out), true));
+    } catch (err) {
+      api.render.error(`Gemini Nano stopped: ${err.message || err}`);
+    } finally {
+      session.destroy();
+    }
+  }
+
+  function offerDownload(snap) {
+    const box = el('div', 'ans');
+    box.append(el('p', null, "Tests passed. The interview version comes from Chrome's built-in Gemini Nano, which runs on your laptop with no API key. It needs a one-time model download first."));
+    const btn = el('button', 'btn', 'Download model');
+    btn.type = 'button';
+    api.on(btn, 'click', () => generate(snap)); // Chrome only starts the download from a click
+    box.append(btn);
+    show(box);
+  }
+
+  async function onPass() {
     const snap = api.codeSnapshot();
     if (!snap || !snap.lines.join('').trim()) return;
-    const h = hash(snap.numbered);
+    const h = hash(snap.lines.join('\n'));
     try {
-      if (sessionStorage.getItem(reviewedKey()) === h) return; // already reviewed this exact code
+      if (sessionStorage.getItem(reviewedKey()) === h) return; // already did this exact code
       sessionStorage.setItem(reviewedKey(), h);
-    } catch { /* storage blocked: review anyway */ }
-    api.ask('Interview review', {
-      title: 'Interview review',
-      label: 'All tests passed. How an interviewer might read your solution:',
-      prompt: reviewPrompt(snap),
-      noJump: true,
-    });
+    } catch { /* storage blocked: carry on */ }
+
+    const a = await availability();
+    if (a === 'available') return generate(snap);
+    if (a === 'downloadable' || a === 'downloading') return offerDownload(snap);
+    show(el('p', 'err', "This Chrome can't run the on-device model, so there's no interview version here."));
   }
 
   api.on(document, 'click', (e) => {
@@ -100,5 +184,5 @@
     if (b && /^(Run|Submit)$/.test(b.textContent.trim())) watchRun();
   }, true);
 
-  api.review = { version: '0.4.0', onPass, readResults };
+  api.review = { version: '0.5.0', onPass, readResults, availability };
 })();

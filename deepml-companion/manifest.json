@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Deep-ML Roaming Companion",
-  "version": "0.4.0",
-  "description": "Draggable bot on Deep-ML: ask about your code in a compact box, answered by Deep-ML's own assistant. The editor jumps to the line it points at, and passing tests brings an interview-style review.",
+  "version": "0.5.0",
+  "description": "Draggable bot on Deep-ML: ask about your code in a compact box, answered by Deep-ML's own assistant, with line jumps. Passing tests brings an interview-ready version of your code from Chrome's on-device Gemini Nano.",
   "content_scripts": [
     {
       "matches": [
