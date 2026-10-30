@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Deep-ML Roaming Companion",
-  "version": "0.3.0",
-  "description": "Draggable bot on Deep-ML: ask about your code in a compact box, answered by Deep-ML's own assistant, and the editor jumps to the line it points at.",
+  "version": "0.4.0",
+  "description": "Draggable bot on Deep-ML: ask about your code in a compact box, answered by Deep-ML's own assistant. The editor jumps to the line it points at, and passing tests brings an interview-style review.",
   "content_scripts": [
     {
       "matches": [
@@ -10,7 +10,8 @@
         "https://deep-ml.com/*"
       ],
       "js": [
-        "content.js"
+        "content.js",
+        "review.js"
       ],
       "run_at": "document_idle",
       "world": "MAIN"
