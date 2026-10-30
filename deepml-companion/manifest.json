@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Deep-ML Roaming Companion",
+  "version": "0.1.0",
+  "description": "Release 1: draggable Deep-ML study assistant, compact popover beside the bot, Attach code, line marks, Alt+K.",
+  "content_scripts": [
+    {
+      "matches": ["https://www.deep-ml.com/*", "https://deep-ml.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    }
+  ]
+}
